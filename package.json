@@ -1,0 +1,16 @@
+{
+  "name": "moyserver",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "author": "Dmitry Savenko <ds@dsavenko.com>",
+  "license": "MIT",
+  "dependencies": {
+    "handlebars": "4.1.2",
+    "jquery": "3.4.0",
+    "js-yaml": "3.13.1",
+    "jsdom": "15.0.0",
+    "node-fetch": "2.4.1",
+    "polka": "0.5.2"
+  }
+}
