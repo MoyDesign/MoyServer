@@ -1,3 +1,6 @@
+const { TextDecoder } = require('util')
+const { URL } = require('url')
+
 const polka = require('polka')
 const fetch = require('node-fetch')
 const jsdom = require('jsdom')
@@ -18,18 +21,24 @@ const HOUR = 60 * MINUTE
 const REFRESH_INTERVAL = 5 * HOUR
 const CHECK_INTERVAL = 5 * MINUTE
 
+const CHARSET_RGX = /charset=([^()<>@,;:\"/[\]?.=\s]*)/i
+
 const { JSDOM } = jsdom
 const virtualDom = new JSDOM('')
 const jQuery = require('jquery')(virtualDom.window)
 
 const DEFAULT_SETTINGS = {
     githubUser: 'MoyDesign',
-    port: 3000
+    port: 3000,
+    defaultUserAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.131 Safari/537.36',
+    defaultContentType: 'text/html; charset=utf-8'
 }
 
 let settings = {
     githubUser: process.env.GITHUB_USER || DEFAULT_SETTINGS.githubUser,
-    port: process.env.PORT || DEFAULT_SETTINGS.port
+    port: process.env.PORT || DEFAULT_SETTINGS.port,
+    defaultUserAgent: process.env.DEFAULT_USER_AGENT || DEFAULT_SETTINGS.defaultUserAgent,
+    defaultContentType: process.env.DEFAULT_CONTENT_TYPE || DEFAULT_SETTINGS.defaultContentType,
 }
 
 let state = {
@@ -52,14 +61,29 @@ function createTemplate(options) {
         Handlebars: Handlebars})
 }
 
+function extractCharset(contentType) {
+    return contentType && CHARSET_RGX.test(contentType) ? CHARSET_RGX.exec(contentType)[1].toLowerCase() : 'utf-8'
+}
+
+async function getFetchedText(resp) {
+    const charset = extractCharset(resp.headers.get('content-type') || '')
+    const arrayBuffer = await resp.arrayBuffer()
+    return new TextDecoder(charset).decode(arrayBuffer)
+}
+
 async function fetchFile(githubFileInfo) {
-    const resp = await fetch(githubFileInfo.download_url)
+    const resp = await fetch(githubFileInfo.download_url, {
+        headers: {
+            'User-Agent': githubFileInfo.user_agent || settings.defaultUserAgent
+        }
+    })
     if (!resp.ok) {
         throw new Error(`${resp.statusText}: ${githubFileInfo.download_url}`)
     }
     return {
         link: githubFileInfo.html_url,
-        text: await resp.text()
+        text: await getFetchedText(resp),
+        headers: resp.headers
     }
 }
 
@@ -104,7 +128,7 @@ function templateFilter(template) {
     return ORIGINAL_LOOK_NAME !== template.name.trim()
 }
 
-async function refreshData() {
+function refreshData() {
     if (!state.refreshDataPromise) {
         state.refreshDataPromise = Promise.all([
                 fetchMap(PARSERS_DIR, fetchParser),
@@ -124,7 +148,6 @@ async function refreshData() {
             .catch(e => {
                 console.log('Error while refreshing data', e)
                 state.lastRefreshError = e
-                throw e
             })
             .finally(() => {
                 state.lastRefresh = Date.now()
@@ -136,7 +159,7 @@ async function refreshData() {
 
 function periodicDataRefresh() {
     if (REFRESH_INTERVAL < Date.now() - state.lastRefresh) {
-        refreshData()
+        refreshData().catch(e => concole.log('Data refresh failed', e))
     }
     setTimeout(periodicDataRefresh, CHECK_INTERVAL)
 }
@@ -164,6 +187,25 @@ function findParser(url) {
     return url && findValue([state.parsers], p => p.isMatch(url))
 }
 
+function customArrayToString() {
+    return this.join(' ')
+}
+
+function isObject(v) {
+    return v === Object(v)
+}
+
+function polishToken(token) {
+    if (Array.isArray(token)) {
+        token.toString = customArrayToString
+        token.forEach(polishToken)
+    }
+    if (isObject(token)) {
+        Object.values(token).forEach(polishToken)
+    }
+    return token
+}
+
 async function render(req, res) {
     try {
         let {url, template: templateName} = req.query
@@ -180,14 +222,27 @@ async function render(req, res) {
             return
         }
         url = parser.getRedirectUrl(url) || url
-        const {text: webData} = await fetchFile({download_url: url})
+        const {text: webData, headers} = await fetchFile({
+            download_url: url,
+            user_agent: req.headers['user-agent']
+        })
         const dom = new JSDOM(webData)
         const realParserOptions = Object.assign({}, parser.options)
         realParserOptions.jQuery = require('jquery')(dom.window)
         realParserOptions.document = dom.window.document
         const realParser = new MoyParser(realParserOptions)
         const parsedData = realParser.parse()
-        res.end(JSON.stringify([...parsedData.content]))
+        const tokens = {
+            BASE_URL: [new URL(url).origin],
+            FULL_URL: [url]
+        }
+        for (const [name, value] of parsedData.content) {
+            tokens[name] = polishToken(value)
+        }
+        var compiledTemplateSpec
+        eval('compiledTemplateSpec = ' + template.precompiled)
+        res.writeHead(200, { 'Content-Type': settings.defaultContentType });
+        res.end(Handlebars.template(compiledTemplateSpec)(tokens))
     } catch (e) {
         console.log('Failed to render', e)
         res.statusCode = 500
