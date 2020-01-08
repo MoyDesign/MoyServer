@@ -6,7 +6,7 @@
   "author": "Dmitry Savenko <ds@dsavenko.com>",
   "license": "MIT",
   "dependencies": {
-    "handlebars": "4.1.2",
+    "handlebars": "4.3.0",
     "jquery": "3.4.0",
     "js-yaml": "3.13.1",
     "jsdom": "15.0.0",
