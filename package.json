@@ -10,7 +10,7 @@
     "jquery": "3.4.0",
     "js-yaml": "3.13.1",
     "jsdom": "15.0.0",
-    "node-fetch": "2.4.1",
+    "node-fetch": "2.6.1",
     "polka": "0.5.2"
   }
 }
